@@ -1,7 +1,7 @@
 # app.py  ────────────────────────────────────────────────────────────
 import streamlit as st
 import tempfile, os
-import file_appoggio as agent     # contiene generate_sf() & calculate_ufp()
+import agente_calcolo as agent     # contiene generate_sf() & calculate_ufp()
 
 # ─────────────────────────  CONFIG  ────────────────────────────────
 st.set_page_config(page_title="Function Point Estimator",
