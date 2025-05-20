@@ -1,4 +1,9 @@
-# agente_calcolo.py
+"""ufp_agents.py
+================
+Due agenti distinti – uno genera la Specifica Funzionale (SF) dal documento ARU,
+l'altro calcola gli Unadjusted Function Point (UFP) a partire dalla SF.
+Le utility originali (FAISS, clamp, Agile‑context, ecc.) restano invariate.
+"""
 import os
 import re
 import pickle
@@ -10,115 +15,81 @@ from sentence_transformers import SentenceTransformer
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 
-# Le tue due funzioni di estrazione
+# Funzioni di estrazione proprietarie
 from estrazione_damas_wave import get_functional_requirements
 from estrazione_dati_utili_wave import parse_aru_docx
 
 ###############################################################################
-# Caricamento ENV + Config
+# ENV & OpenAI
 ###############################################################################
 load_dotenv()
-
-openai.api_type = os.getenv("OPENAI_API_TYPE")
-openai.api_base = os.getenv("OPENAI_API_BASE")
+openai.api_type    = os.getenv("OPENAI_API_TYPE")
+openai.api_base    = os.getenv("OPENAI_API_BASE")
 openai.api_version = os.getenv("OPENAI_API_VERSION")
-openai.api_key = os.getenv("OPENAI_API_KEY")
-DEPLOYMENT_NAME = os.getenv("DEPLOYMENT_NAME")
-
+openai.api_key     = os.getenv("OPENAI_API_KEY")
+DEPLOYMENT_NAME    = os.getenv("DEPLOYMENT_NAME")
 if not openai.api_key or not DEPLOYMENT_NAME:
-    raise ValueError("OPENAI_API_KEY / DEPLOYMENT_NAME non impostate in .env")
-
-def init_logger(log_file='app.log'):
-    logger = logging.getLogger('FP_Calc')
-    logger.setLevel(logging.DEBUG)
-
-    fh = logging.FileHandler(log_file)
-    fh.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-
-    fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(fmt)
-    ch.setFormatter(fmt)
-
-    if not logger.handlers:
-        logger.addHandler(fh)
-        logger.addHandler(ch)
-    return logger
-
-logger = init_logger()
+    raise ValueError("OPENAI_API_KEY / DEPLOYMENT_NAME mancante nel .env")
 
 ###############################################################################
-# Lettura PDF e FAISS
+# Logging
 ###############################################################################
-def read_pdf_and_chunk(pdf_path, chunk_size=500):
-    logger.info(f"Lettura PDF: {pdf_path}")
+logger = logging.getLogger("UFP_Agents")
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    sh = logging.StreamHandler(); sh.setLevel(logging.INFO)
+    fh = logging.FileHandler("app.log"); fh.setLevel(logging.DEBUG)
+    fmt = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    sh.setFormatter(fmt); fh.setFormatter(fmt)
+    logger.addHandler(sh); logger.addHandler(fh)
+
+###############################################################################
+# PDF manuale & FAISS (copia invariata rispetto allo script originale)
+###############################################################################
+def read_pdf_and_chunk(pdf_path: str, chunk_size: int = 500):
+    logger.info("Lettura PDF %s", pdf_path)
     with open(pdf_path, "rb") as f:
-        reader = PdfReader(f)
-        all_txt = []
-        for page in reader.pages:
-            ptxt = page.extract_text()
-            if ptxt:
-                all_txt.append(ptxt.strip())
-    big_txt = "\n".join(all_txt)
-    chunks = [big_txt[i:i + chunk_size] for i in range(0, len(big_txt), chunk_size)]
-    logger.info(f"Suddiviso in {len(chunks)} chunk da ~{chunk_size} char.")
-    return chunks
+        pages = [p.extract_text().strip() for p in PdfReader(f).pages if p.extract_text()]
+    big = "\n".join(pages)
+    return [big[i:i+chunk_size] for i in range(0, len(big), chunk_size)]
 
-def build_faiss_index(chunks, model,
-                      faiss_index_path="manual_damas.index",
-                      embeddings_path="manual_damas.npy"):
-    if os.path.exists(faiss_index_path) and os.path.exists(embeddings_path):
-        logger.info("Caricamento FAISS index + embeddings da cache.")
-        emb = np.load(embeddings_path)
-        faiss_index = faiss.read_index(faiss_index_path)
-        return faiss_index
-    else:
-        logger.info("Creazione indice FAISS ex novo.")
-        emb = model.encode(chunks)
-        idx = faiss.IndexFlatL2(emb.shape[1])
-        idx.add(emb.astype("float32"))
-        faiss.write_index(idx, faiss_index_path)
-        np.save(embeddings_path, emb)
-        return idx
 
-def retrieve_context(query, faiss_index, chunks, model, k=1):
-    logger.info(f"Recupero contesto con FAISS (k={k}).")
+def build_faiss_index(chunks, model, idx_path="manual_FP_calc.index", emb_path="manual_FP_calc.npy"):
+    if os.path.exists(idx_path) and os.path.exists(emb_path):
+        logger.info("Caricamento FAISS index da cache")
+        return faiss.read_index(idx_path)
+    logger.info("Creazione FAISS index nuovo")
+    emb = model.encode(chunks)
+    idx = faiss.IndexFlatL2(emb.shape[1]); idx.add(emb.astype("float32"))
+    faiss.write_index(idx, idx_path); np.save(emb_path, emb)
+    return idx
+
+
+def retrieve_context(query, idx, chunks, model, k=2):
     qemb = model.encode([query]).astype("float32")
-    dist, idxs = faiss_index.search(qemb, k)
-    relevant = [chunks[i] for i in idxs[0] if i < len(chunks)]
-    context = "\n".join(relevant)
-    if len(context) > 2000:
-        context = context[:2000]
-    return context
+    _, ids = idx.search(qemb, k)
+    ctx = "\n".join(chunks[i] for i in ids[0])
+    return ctx[:2000]
 
-def get_manual_chunks(pdf_path="Function_Point_calcManual.pdf", chunk_size=500, cache_file="manual_chunks.pkl"):
-    if os.path.exists(cache_file):
-        logger.info(f"Caricamento chunk da {cache_file}")
-        with open(cache_file, 'rb') as f:
-            c = pickle.load(f)
-        return c
-    else:
-        c = read_pdf_and_chunk(pdf_path, chunk_size)
-        with open(cache_file, 'wb') as f:
-            pickle.dump(c, f)
-        return c
+
+def get_manual_chunks(pdf_path: str, chunk_size=500, cache="manual_chunks.pkl"):
+    if os.path.exists(cache):
+        return pickle.load(open(cache, "rb"))
+    ch = read_pdf_and_chunk(pdf_path, chunk_size)
+    pickle.dump(ch, open(cache, "wb")); return ch
 
 ###############################################################################
-# Support: clamp Totale UFP e pre-analisi
+# Clamp & Agile helpers (immutati)
 ###############################################################################
-def clamp_range_in_text(answer, min_val, max_val):
-    pattern = re.compile(r'Totale UFP\s*=\s*(\d+)')
-    matches = pattern.findall(answer)
-    if matches:
-        old_str = matches[-1]  # prendi l'ultimo match
-        val = int(old_str)
-        if val < min_val:
-            val = min_val
-        elif val > max_val:
-            val = max_val
-        answer = re.sub(r'Totale UFP\s*=\s*\d+', f'Totale UFP = {val}', answer)
-        logger.info(f"Clamp del Totale UFP: da {old_str} a {val} (range {min_val}-{max_val}).")
+CLAMP_MIN, CLAMP_MAX = 20, 200
+
+def clamp_range(answer: str, lo=CLAMP_MIN, hi=CLAMP_MAX):
+    m = re.search(r"Totale UFP\s*=\s*(\d+)", answer)
+    if m:
+        old = int(m.group(1)); new = max(min(old, hi), lo)
+        if new != old:
+            answer = re.sub(r"Totale UFP\s*=\s*\d+", f"Totale UFP = {new}", answer)
+            logger.info("Clamp UFP %d→%d", old, new)
     return answer
 
 def quick_pre_analysis(req_text):
@@ -127,273 +98,211 @@ def quick_pre_analysis(req_text):
     rf_count = sum(1 for ln in lines if "RF" in ln)
     return f"Trovati {rf_count} requisiti con label 'RF'."
 
-###############################################################################
-# Nuove funzioni per il contesto Agile
-###############################################################################
-def is_agile_context(requirements_text):
-    """Verifica se nel testo sono presenti parole chiave di contesto Agile."""
-    agile_keywords = ['product backlog', 'sprint', 'agile', 'metodologia agile']
-    requirements_lower = requirements_text.lower()
-    return any(keyword in requirements_lower for keyword in agile_keywords)
+AGILE_KWS = {"product backlog","sprint","agile","metodologia agile"}
 
-def adjust_ufp_for_agile(answer, requirements_text, reduction_factor=0.4):
-    """
-    Se il contesto è agile, riduce il valore 'Totale UFP' applicando il reduction_factor.
-    Per una riduzione del 60% il reduction_factor deve essere 0.4 (ossia mantieni il 40% del valore originale).
-    """
-    if is_agile_context(requirements_text):
-        pattern = r"Totale UFP\s*=\s*(\d+)"
-        match = re.search(pattern, answer)
-        if match:
-            original_ufp = int(match.group(1))
-            new_ufp = int(original_ufp * reduction_factor)
-            answer = re.sub(pattern, f"Totale UFP = {new_ufp}", answer)
-            logger.info(f"Contesto Agile rilevato. Riduzione UFP: da {original_ufp} a {new_ufp} (riduzione del 60%).")
+def is_agile(text: str):
+    t = text.lower(); return any(kw in t for kw in AGILE_KWS)
+
+def adjust_for_agile(answer: str, req: str, factor=0.4):
+    if not is_agile(req):
+        return answer
+    m = re.search(r"Totale UFP\s*=\s*(\d+)", answer)
+    if not m:
+        return answer
+    old = int(m.group(1)); new = int(old * factor)
+    logger.info("Agile context → UFP %d→%d", old, new)
+    return re.sub(r"Totale UFP\s*=\s*\d+", f"Totale UFP = {new}", answer)
+
+###############################################################################
+# Agent 1 – Generatore di Specifica Funzionale
+###############################################################################
+PROMPT_SF_TEMPLATE = """Hai l'obiettivo di convertire un documento di Analisi Requisiti Utente (ARU) in un documento di Specifica Funzionale (SF) utile a un successivo calcolo dei function point secondo standard IFPUG. Il documento deve essere il più lungo e completo possibile. Considera che deve essere almeno 3-4 pagine. Se non riesci a dare l'output in un'unica risposta dividi in più risposte. 
+Ecco il Prompt di Estrazione per Documento di Specifica Funzionale e Non Funzionale 
+1.	Introduzione
+Estrarre la sezione che descrive il contesto di riferimento, gli obiettivi del progetto, il committente e i vincoli temporali e di pianificazione. 
+2.	Descrizione Generale del Sistema
+Estrarre una panoramica generale del sistema, includendo l'ambito del progetto, gli utenti principali e le interfacce con altri sistemi.
+ 
+3.	Definizione dei Boundary del Sistema
+Definire i confini del sistema, distinguendo tra ciò che è interno e ciò che è esterno, specificando gli archivi logici interni (ILF) e gli archivi logici esterni (EIF).
+Requisiti Funzionali
+ 
+Estrarre e organizzare tutti i requisiti funzionali presenti nel documento ARU, includendo per ogni requisito:
+- ID del requisito
+- Titolo del requisito
+- Descrizione dettagliata del requisito: includere i processi elementari, le funzionalità richieste e le regole di business pertinenti.
+- Priorità del requisito
+- Dipendenze: indicare eventuali dipendenze con altri requisiti o moduli del sistema.
+ 
+Dettagli sui Dati e le Transazioni:
+• Data Function (Funzioni di Dato): Specificare dettagliatamente gli Archivi Logici Interni (ILF) e gli Archivi Logici Esterni (EIF), descrivendo le entità e gli attributi principali.
+• Transaction Function (Funzioni di Transazione): Definire le Entrate Esterne (EI), Uscite Esterne (EO) e Consultazioni Esterne (EQ), includendo la descrizione dei processi e delle logiche di elaborazione associate.
+ 
+4.	Requisiti Non Funzionali
+Estrarre e catalogare i requisiti non funzionali, includendo dettagli su:
+• Prestazioni: specifiche richieste di performance.
+• Sicurezza: requisiti relativi alla protezione dei dati e alla sicurezza del sistema.
+• Usabilità: requisiti sull'interfaccia utente e l'esperienza d'uso.
+• Affidabilità: standard di affidabilità e disponibilità richiesti.
+• Manutenibilità: requisiti per la manutenzione e l'aggiornamento del sistema.
+• Portabilità: necessità di operare in diversi ambienti o piattaforme.
+ 
+5.	Regole di Business
+Documentare tutte le regole di business che influenzano le operazioni e i calcoli effettuati dal sistema.
+ 
+6.	Eccezioni e Condizioni Speciali
+Descrivere eventuali eccezioni, condizioni speciali o situazioni non standard che il sistema deve gestire.
+ 
+7.	Report e Output del Sistema
+Documentare tutti i report e gli output generati dal sistema, specificando il contenuto, il formato e la frequenza.
+ 
+8.	Interfacce Utente
+Dettagliare le interfacce utente, includendo le schermate e le interazioni previste, per identificare correttamente le Entrate Esterne (EI).
+ 
+9.	Processi di Interfacciamento con Altri Sistemi
+Descrivere come il sistema interagisce con altri sistemi, identificando le interfacce esterne e il flusso di dati tra sistemi.
+ 
+10.	Casi d'Uso e Scenari Operativi
+Fornire una descrizione dei casi d'uso principali e degli scenari operativi che il sistema deve supportare.
+ 
+11.	Dettagli sull'Architettura del Sistema
+Fornire una panoramica dell'architettura del sistema, descrivendo i componenti principali e le loro interazioni.
+ 
+12.	Allegati e Appendici
+Estrarre eventuali allegati e appendici, includendo:
+- Glossario: definizioni di termini tecnici e acronimi.
+- Diagrammi e Modelli: diagrammi di flusso, modelli di dati e altri diagrammi tecnici.
+- Prototipi e Schermate: bozze o esempi di schermate dell'interfaccia utente.
+ 
+13.	Note
+Assicurarsi di mantenere l'ordine e l'organizzazione originale dei contenuti durante l'estrazione.
+Ogni sezione del documento di specifica deve essere chiaramente separata e etichettata, seguendo la struttura delineata sopra.
+"""
+
+def agent_generate_sf(aru_text: str) -> str:
+    messages = [
+        {"role":"system","content":"Sei un analista senior di Specifiche Funzionali."},
+        {"role":"user",  "content": PROMPT_SF_TEMPLATE.format(aru=aru_text)}
+    ]
+    resp = openai.ChatCompletion.create(engine=DEPLOYMENT_NAME, messages=messages, max_tokens=6000, temperature=0.0)
+    sf = resp.choices[0].message.content.strip()
+    logger.info("Specifiche Funzionali generate (agent 1)")
+    return sf
+
+###############################################################################
+# Agent 2 – Calcolo UFP
+###############################################################################
+PROMPT_UFP_TEMPLATE = """
+[SPECIFICA FUNZIONALE]
+{sf}
+
+Sei un esperto analista di Function Point certificato IFPUG con esperienza nella stima di progetti di varie dimensioni. Utilizza la specifica funzionale che hai appena creato. Il tuo compito è analizzare questi requisiti e calcolare gli Unadjusted Function Point (UFP) secondo lo standard IFPUG 4.3.1. Segui attentamente questi passaggi:
+  
+1. Analisi preliminare:
+  - Leggi attentamente il documento delle spedifica funzionale.
+  - Riassumi in 3-5 frasi la portata e il contesto del progetto, inclusa una stima preliminare delle sue dimensioni (piccolo, medio, grande).
+  - Identifica e elenca tutti i processi elementari e i gruppi di dati logici menzionati esplicitamente.
+ 
+2. Identificazione e classificazione delle funzioni:
+  - Identifica e classifica le funzioni di tipo dati (ILF e EIF), limitandoti a quelle chiaramente definite nei requisiti.
+  - Identifica e classifica le funzioni di tipo transazionale (EI, EO, EQ), considerando solo i processi elementari distinti.
+  - Per ogni funzione identificata, fornisci una breve giustificazione della classificazione e spiega perché non potrebbe essere classificata diversamente.
+ 
+3. Valutazione della complessità:
+  - Per ogni funzione di tipo dati, determina il numero di RET e DET, giustificando chiaramente le tue decisioni.
+  - Per ogni funzione transazionale, determina il numero di FTR e DET, giustificando chiaramente le tue decisioni.
+  - Usa le matrici di complessità fornite nel documento IFPUG per determinare la complessità di ciascuna funzione.
+ 
+4. Calcolo degli UFP (Unadjusted Function Points):
+  - Assegna il valore di UFP appropriato a ciascuna funzione in base alla sua complessità.
+  - Somma tutti i valori UFP per ottenere il totale.
+  - Fornisci una breve analisi del totale UFP in relazione alla tua stima preliminare delle dimensioni del progetto.
+ 
+5. Presentazione dei risultati:
+  - Fornisci una tabella riassuntiva con il conteggio dettagliato per tipo di funzione.
+  - Presenta il calcolo finale dei Function Point, mostrando chiaramente tutti i passaggi.
+ 
+6. Analisi di sensibilità:
+  - Identifica le 3-5 decisioni che hanno avuto il maggior impatto sul conteggio finale.
+  - Spiega come cambierebbe il risultato se queste decisioni fossero state prese diversamente.
+ 
+7. Verifica finale:
+   - Rivedi il tuo conteggio complessivo e assicurati che sia coerente con la portata e la complessità del progetto come descritto nei requisiti.
+   - Se noti incongruenze, rivedi i passaggi precedenti e giustifica eventuali modifiche.
+ 
+Ricorda di essere preciso e coerente in tutte le tue valutazioni. Giustifica chiaramente ogni decisione che ha un impatto significativo sul conteggio finale. Se ci sono ambiguità nei requisiti, esplicita le tue assunzioni e spiega come queste influenzano il conteggio.
+
+"""
+
+def agent_calculate_ufp(sf_text: str, requirements_text: str) -> str:
+    messages = [
+        {"role":"system","content":"Sei un analista Function Point IFPUG esperto."},
+        {"role":"user",  "content": PROMPT_UFP_TEMPLATE.format(sf=sf_text)}
+    ]
+    resp = openai.ChatCompletion.create(engine=DEPLOYMENT_NAME, messages=messages, max_tokens=4000, temperature=0.0)
+    answer = resp.choices[0].message.content.strip()
+    answer = clamp_range(answer)
+    answer = adjust_for_agile(answer, requirements_text)
+    logger.info("Report UFP generato (agent 2)")
     return answer
 
 ###############################################################################
-# Funzione Principale di generazione (con EURIStiche)
+# Agenti per app.py
 ###############################################################################
-def generate_fp_estimate_text_heuristics(requirements_text, ufp_info, pre_analysis_text, manual_context):
+
+# --- all’interno di agente_calcolo.py ---------------------------
+
+def generate_sf(docx_path: str) -> tuple[str, str]:
     """
-    Genera un testo unificato che includa:
-      1) Un documento di Specifica Funzionale (almeno 3-4 pagine) con la struttura:
-         - Introduzione (contesto, obiettivi, committente, vincoli)
-         - Descrizione Generale del Sistema (ambito, utenti, interfacce)
-         - Definizione dei Boundary del Sistema (ILF, EIF)
-         - Requisiti Non Funzionali
-         - Regole di Business
-         - Eccezioni e Condizioni Speciali
-         - Report e Output del Sistema
-         - Interfacce Utente
-         - Processi di Interfacciamento con altri sistemi
-         - Casi d'Uso e Scenari Operativi
-         - Dettagli sull'Architettura
-         - Allegati e Appendici (Glossario, Diagrammi, Prototipi)
-         - ... e considerazioni su EI, EO, EQ, DET, FTR e su come calcoli ILF/EIF
-         (Se supera i token, dividere in più parti)
-         (Integrare info estratte senza duplicazioni)
-      2) Il calcolo dei Function Point (solo UFP): EI, EO, EQ, ILF, EIF, con DET/FTR/RET, complessità, peso, totali parziali.
-      3) Una tabella Markdown finale:
-           ## Riepilogo e Calcolo Totale UFP
-           | Tipo | Nome | Complessità | Peso | Totale |
-           ...
-           **Totale UFP = X**
-      4) Applicazione di "euristiche generali" per non fondere funzionalità distinte e non perdere informazioni.
-      5) Non calcolare né menzionare in alcun modo AFP.
+    Ritorna:
+        sf_text   – Specifica Funzionale generata (markdown o testo)
+        req_text  – testo requisiti (serve dopo per Agile / clamp)
     """
+    aru_text            = get_functional_requirements(docx_path, use_regex=True)
+    sf_text             = agent_generate_sf(aru_text)
+    return sf_text, aru_text
 
-    # TABELLE DI COMPLESSITÀ IFPUG (incollate nel prompt)
-    complexity_tables = """
-    TABELLE DI RIFERIMENTO IFPUG (semplificate per EI, EO, EQ, ILF, EIF):
 
-    1) Valutazione ILF/EIF (complessità) in base a DET e RET:
-          Data Element Types
-    RET    1-19   20-50   >=51
-    --------------------------
-     1     Basso  Basso   Medio
-    2-5    Basso  Medio   Alto
-    >5     Medio  Alto    Alto
-
-    2) Valutazione External Input (EI) in base a DET e FTR:
-           Data Element Types
-    FTR     1-4   5-15   >=16
-    -------------------------
-    <2      Basso Basso  Medio
-     2      Basso Medio  Alto
-    >2      Medio Alto   Alto
-
-    3) Valutazione External Output (EO) in base a DET e FTR:
-           Data Element Types
-    FTR     1-5   6-19   >=20
-    -------------------------
-    <2      Basso Basso  Medio
-    2-3     Basso Medio  Alto
-    >3      Medio Alto   Alto
-
-    4) Valutazione External Inquiry (EQ) in base a DET e FTR:
-           Data Element Types
-    FTR     1-5   6-19   >=20
-    -------------------------
-    <2      Basso Basso  Medio
-    2-3     Basso Medio  Alto
-    >3      Medio Alto   Alto
+def calculate_ufp(sf_text: str, requirements_text: str) -> str:
     """
-
-    # Regole generali per non fondere funzionalità
-    heuristics = """
-Regole Generali di Separazione Funzionalità:
-1) Non unire MAI in un'unica voce funzioni distinte se i requisiti le menzionano separatamente (evita fusioni).
-2) Se ci sono più tipologie di input (file diversi, ecc.), enumerale come EI separati.
-3) Se ci sono più output (report, log, dashboard), enumerali come EO distinti.
-4) Non calcolare AFP.
-5) Elenca sempre tutti gli EI, EO, EQ, ILF, EIF specificando se sono EI, EO, EQ, ILF o EIF e specificando i rispettivi DET e FRT per gli EI, EO e EQ e i rispettivi DET e RET ILF e EIF.
-6) Concludi con la tabella Markdown:
-   ## Riepilogo e Calcolo Totale UFP
-   | Tipo            | Nome | Complessità | Peso | Totale           |
-   ...
-   **Totale UFP = X**
-7) Per la colonna Tipo l'ordine di elencazione deve essere sempre EI, EO, EQ, ILF, EIF.
-8) Se i requisiti non dicono che due funzioni siano la stessa, trattale come separate (evita "perdita di informazione").
-9) Mantieni un ordine coerente (EI, EO, EQ, ILF, EIF) ma senza unire funzioni.
-10) Se ci sono più EI, EO, EQ, ILF, EIF non devono mai essere considerati un'unica cosa, vanno sempre presi separati.
-11) Se l'ARU (o i requisiti) menziona più sorgenti esterne (es. “Sorgente A”, “Sorgente B”),
-    e l'utente/business le riconosce come sistemi/autori differenti, allora tali sorgenti vanno sempre considerate come EIF separati.
-12) Se un requisito descrive più modalità o varianti di estrazione, tali modalità vanno sempre classificate come EQ separate.
-13) Ogni flusso di acquisizione di dati differenti deve essere considerato un External Input (EI) separato.
-14) Ogni elaborazione o visualizzazione che presenti differenze significative deve essere classificata come una transazione EO separata.
-15) Ogni uscita che comporti calcoli deve essere considerata External Output (EO).
+    Usa Agent 2 e restituisce il report UFP in markdown.
     """
+    return agent_calculate_ufp(sf_text, requirements_text)
 
-    # Struttura richiesta
-    request_structure = """
-Richiesta:
-1) Genera un documento di Specifica Funzionale (SF) completo (almeno 3-4 pagine) utile al calcolo dei Function Point (IFPUG), seguendo questa struttura:
-   - Introduzione: contesto, obiettivi, committente, vincoli di pianificazione.
-   - Descrizione Generale del Sistema: ambito, utenti principali, interfacce.
-   - Definizione dei Boundary del Sistema: confini interni ed esterni (ILF, EIF).
-   - Requisiti Non Funzionali: prestazioni, sicurezza, usabilità, affidabilità, manutenibilità, portabilità.
-   - Regole di Business.
-   - Eccezioni e Condizioni Speciali.
-   - Report e Output del Sistema: contenuto, formato, frequenza.
-   - Interfacce Utente.
-   - Processi di Interfacciamento con altri sistemi.
-   - Casi d'Uso e Scenari Operativi.
-   - Dettagli sull'Architettura.
-   - Allegati e Appendici (Glossario, Diagrammi, Prototipi).
-   - Spiega come calcoli EI, EO, EQ (DET, FTR) e come consideri ILF/EIF (RET, DET).
-2) Se il contenuto supera la capacità di una singola risposta, dividilo in più parti.
-3) Integra le informazioni già estratte senza duplicazioni.
-4) Non menzionare AFP. Concludi con una tabella di calcolo UFP (EI, EO, EQ, ILF, EIF).
-5) Tratta come separate funzioni che non sono esplicitamente indicate come uguali.
-6) Mantieni l'ordine EI, EO, EQ, ILF, EIF.
-7) Concludi con la tabella in Markdown e "**Totale UFP = X**".
-    """
 
-    prompt = f"""
-Sei un esperto di Function Point Analysis (IFPUG).
-
-Ecco alcune indicazioni di contesto:
-
-[PRE-ANALISI AUTOMATICA]
-{pre_analysis_text}
-
-[Requisiti Funzionali Estratti]
-{requirements_text}
-
-[UFN Info e Sommario]
-{ufp_info}
-
-[Estratto Manuale IFPUG]
-{manual_context}
-
-[TABELLE IFPUG]
-{complexity_tables}
-
-============================================================
-{heuristics}
-
-{request_structure}
-
-Alla fine:
-- Mostra il calcolo di EI, EO, EQ, ILF, EIF con DET/FTR, complessità, peso.
-- Produci la tabella in Markdown, seguita da "**Totale UFP = X**".
-- Niente AFP.
-    """
-
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "Sei un analista FP IFPUG: quando rispondi, devi creare un testo discorsivo completo "
-                "come da struttura indicata, applicando le regole di separazione delle funzionalità. "
-                "NON menzionare AFP, concludi con la tabella e Totale UFP."
-            )
-        },
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
-
-    try:
-        response = openai.ChatCompletion.create(
-            engine=DEPLOYMENT_NAME,
-            messages=messages,
-            max_tokens=4000,
-            temperature=0.0,
-            top_p=1.0,
-            presence_penalty=0.0,
-            frequency_penalty=0.0
-        )
-        answer = response["choices"][0]["message"]["content"].strip()
-
-        # Applica un clamp sul valore UFP se necessario (es. range 20-200)
-        answer = clamp_range_in_text(answer, 20, 200)
-        # Se il contesto dei requisiti indica un approccio Agile, riduci il totale UFP del 60%
-        answer = adjust_ufp_for_agile(answer, requirements_text)
-
-        return answer
-
-    except Exception as e:
-        logger.error(f"Errore generate_fp_estimate_text_heuristics: {e}")
-        return "Errore nella generazione."
 
 ###############################################################################
-# Pipeline Principale
+# Pipeline completa
 ###############################################################################
-def run_agent(docx_path):
-    """
-    1) Carica e chunk PDF
-    2) Costruisce l'indice FAISS
-    3) Estrae requisiti dal file .docx
-    4) Ottiene contesto dal manuale PDF
-    5) Genera il testo completo con euristiche
-    """
-    pdf_path = "Function_Point_calcManual.pdf"
-    chunks = get_manual_chunks(pdf_path, 500, "manual_chunks.pkl")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    idx = build_faiss_index(chunks, model)
+PDF_MANUAL_PATH = r"C:\Users\A395959\PycharmProjects\UFP_estimator\Function_Point_calcManual.pdf"
 
-    query = "Tabelle IFPUG e calcolo EI, EO, EQ, ILF, EIF"
-    manual_context = retrieve_context(query, idx, chunks, model, k=2)
 
-    logger.info("Estrazione requisiti dal docx.")
-    req_text = get_functional_requirements(docx_path)
-    ufp_info, _, short_summary = parse_aru_docx(docx_path)
+def run_pipeline(docx_path: str):
+    # 0) Estrai testo ARU
+    logger.info("Estrazione ARU da %s", docx_path)
+    aru_text            = get_functional_requirements(docx_path, use_regex=True)
+    pre_analysis        = quick_pre_analysis(aru_text)
+    ufp_info, _, _      = parse_aru_docx(docx_path)
 
-    pre_analysis_txt = quick_pre_analysis(req_text)
+    # 1) Agent 1 – Specifiche Funzionali
+    sf_text = agent_generate_sf(aru_text)
+    with open("specifica_funzionale.md", "w", encoding="utf-8") as f:
+        f.write(sf_text)
 
-    print("\n=== DEBUG ===")
-    print(f"Manual Context: {manual_context}")
-    # print(f"Pre-Analysis: {pre_analysis_txt}")
-    # print(f"Functional Requirements:\n{req_text}")
-    # print(f"UFP Info:\n{ufp_info}")
+    # 2) Agent 2 – Calcolo UFP
+    ufp_report = agent_calculate_ufp(sf_text, aru_text)
+    with open("ufp_report.md", "w", encoding="utf-8") as f:
+        f.write(ufp_report)
 
-    final_text = generate_fp_estimate_text_heuristics(
-        requirements_text=req_text,
-        ufp_info=ufp_info,
-        pre_analysis_text=pre_analysis_txt,
-        manual_context=manual_context
-    )
-
-    return short_summary, final_text, ufp_info
+    return sf_text, ufp_report, pre_analysis, ufp_info
 
 ###############################################################################
 # MAIN
 ###############################################################################
 if __name__ == "__main__":
-    # Sostituisci con il percorso del file .docx da elaborare
-    # docx_path = r"C:\Users\A395959\PycharmProjects\pyMilvus\ARU_dir\ARU-Mercato-Re-factoringDamas(Analisi&DesignSprint17-18)_20240725103817.490_X.docx"
-    docx_path = docx_path = r"C:\Users\A395959\PycharmProjects\pyMilvus\ARU_dir\ARU -Inerzia 2.1 Evolutive 2022 Fase 1 20220331.docx"
-
-    summary, spec, ufp_info= run_agent(docx_path)
-
-    print("\n=== SHORT SUMMARY ARU ===\n")
-    print(summary)
-
-    print("\n=== INFO UFP ===\n")
-    print(ufp_info)
-
-    print("\n=== SPECIFICA FUNZIONALE + TABELLA UFP ===\n")
-    print(spec)
+    DOCX_PATH = r"C:\Users\A395959\PycharmProjects\UFP_estimator\ARU_dir\ARU - STL 2023 Wave 1.docx"
+    sf, report, pre, info = run_pipeline(DOCX_PATH)
+    print("\n=== PRE‑ANALISI ===\n", pre)
+    print("\n=== INFO UFP (dal docx) ===\n", info)
+    print("\n=== SPECIFICA FUNZIONALE ===\n", sf)
+    print("\n=== REPORT UFP ===\n", report)
