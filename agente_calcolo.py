@@ -116,7 +116,9 @@ def adjust_for_agile(answer: str, req: str, factor=0.4):
 ###############################################################################
 # Agent 1 – Generatore di Specifica Funzionale
 ###############################################################################
-PROMPT_SF_TEMPLATE = """Hai l'obiettivo di convertire un documento di Analisi Requisiti Utente (ARU) in un documento di Specifica Funzionale (SF) utile a un successivo calcolo dei function point secondo standard IFPUG. Il documento deve essere il più lungo e completo possibile. Considera che deve essere almeno 3-4 pagine. Se non riesci a dare l'output in un'unica risposta dividi in più risposte. 
+PROMPT_SF_TEMPLATE = """
+
+Hai l'obiettivo di convertire un documento di Analisi Requisiti Utente (ARU) in un documento di Specifica Funzionale (SF) utile a un successivo calcolo dei function point secondo standard IFPUG. Il documento deve essere il più lungo e completo possibile. Considera che deve essere almeno 3-4 pagine. Se non riesci a dare l'output in un'unica risposta dividi in più risposte. 
 Ecco il Prompt di Estrazione per Documento di Specifica Funzionale e Non Funzionale 
 1.	Introduzione
 Estrarre la sezione che descrive il contesto di riferimento, gli obiettivi del progetto, il committente e i vincoli temporali e di pianificazione. 
@@ -179,10 +181,26 @@ Assicurarsi di mantenere l'ordine e l'organizzazione originale dei contenuti dur
 Ogni sezione del documento di specifica deve essere chiaramente separata e etichettata, seguendo la struttura delineata sopra.
 """
 
-def agent_generate_sf(aru_text: str) -> str:
+def agent_generate_sf(aru_text: str, summary: str = "", ufp_info: str = "") -> str:
+
     messages = [
         {"role":"system","content":"Sei un analista senior di Specifiche Funzionali."},
-        {"role":"user",  "content": PROMPT_SF_TEMPLATE.format(aru=aru_text)}
+        {"role":"user",  "content": f"""
+        Hai l'obiettivo di convertire un documento di Analisi Requisiti Utente (ARU) in un documento di Specifica Funzionale (SF) utile a un successivo calcolo dei function point secondo standard IFPUG. 
+        
+        [CONTESTO AGGIUNTIVO]
+        Ecco un riepilogo dell'analisi preliminare:
+        {summary}
+        
+        Ecco informazioni estratte automaticamente utili per il conteggio dei Function Point:
+        {ufp_info}
+        
+        [REQUISITI FUNZIONALI]
+        {aru_text}
+        
+        Ora segui il Prompt seguente per generare il documento SF completo:
+        {PROMPT_SF_TEMPLATE}
+        """}
     ]
     resp = openai.ChatCompletion.create(engine=DEPLOYMENT_NAME, messages=messages, max_tokens=6000, temperature=0.0)
     sf = resp.choices[0].message.content.strip()
@@ -258,7 +276,8 @@ def generate_sf(docx_path: str) -> tuple[str, str]:
         sf_text   – Specifica Funzionale generata (markdown o testo)
         req_text  – testo requisiti (serve dopo per Agile / clamp)
     """
-    aru_text            = get_functional_requirements(docx_path, use_regex=True)
+    # aru_text            = get_functional_requirements(docx_path, use_regex=True)
+    aru_text = get_functional_requirements(docx_path, use_regex=True)
     sf_text             = agent_generate_sf(aru_text)
     return sf_text, aru_text
 
@@ -282,10 +301,11 @@ def run_pipeline(docx_path: str):
     logger.info("Estrazione ARU da %s", docx_path)
     aru_text            = get_functional_requirements(docx_path, use_regex=True)
     pre_analysis        = quick_pre_analysis(aru_text)
-    ufp_info, _, _      = parse_aru_docx(docx_path)
+    ufp_info, _, summary      = parse_aru_docx(docx_path)
 
     # 1) Agent 1 – Specifiche Funzionali
-    sf_text = agent_generate_sf(aru_text)
+    sf_text = agent_generate_sf(aru_text, summary=summary, ufp_info=ufp_info)
+
     with open("specifica_funzionale.md", "w", encoding="utf-8") as f:
         f.write(sf_text)
 
