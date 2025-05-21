@@ -5,7 +5,7 @@ import openai
 import easyocr
 from docx import Document
 from dotenv import load_dotenv
-from transformers.models.poolformer.modeling_poolformer import POOLFORMER_INPUTS_DOCSTRING
+
 
 # Carica variabili d'ambiente dal file .env (opzionale)
 load_dotenv()
