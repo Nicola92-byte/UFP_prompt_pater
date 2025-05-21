@@ -4,7 +4,7 @@ import tempfile, os
 
 # Importiamo sia le singole funzioni che la pipeline completa
 import agente_calcolo as agent     # contiene ancora generate_sf() & calculate_ufp()
-from agente_calcoloimport run_pipeline
+from agente_calcolo import run_pipeline
 
 # ─────────────────────────  CONFIG  ────────────────────────────────
 st.set_page_config(
