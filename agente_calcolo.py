@@ -116,19 +116,23 @@ def adjust_for_agile(answer: str, req: str, factor=0.4):
 ###############################################################################
 # Agent 1 – Generatore di Specifica Funzionale
 ###############################################################################
-PROMPT_SF_TEMPLATE = """
 
-Hai l'obiettivo di convertire un documento di Analisi Requisiti Utente (ARU) in un documento di Specifica Funzionale (SF) utile a un successivo calcolo dei function point secondo standard IFPUG. Il documento deve essere il più lungo e completo possibile. Considera che deve essere almeno 3-4 pagine. Se non riesci a dare l'output in un'unica risposta dividi in più risposte. 
-Ecco il Prompt di Estrazione per Documento di Specifica Funzionale e Non Funzionale 
-1.	Introduzione
-Estrarre la sezione che descrive il contesto di riferimento, gli obiettivi del progetto, il committente e i vincoli temporali e di pianificazione. 
-2.	Descrizione Generale del Sistema
+PROMPT_SF_TEMPLATE = """
+Hai l'obiettivo di convertire un documento di Analisi Requisiti Utente (ARU) in un documento di Specifica Funzionale (SF) utile a un successivo calcolo dei function point secondo standard IFPUG con metodologia "Simple Function Point (SFP)" e specifico riferimento al "Counting Practices Manual (Release 2.2)". 
+Il documento deve essere il più lungo e completo possibile. Considera che deve essere almeno 3-4 pagine. Se non riesci a dare l'output in un'unica risposta dividi in più risposte.
+ 
+Ecco il Prompt di Estrazione per il documento di Specifica Funzionale (SF):
+ 
+Introduzione
+Estrarre la sezione che descrive il contesto di riferimento, gli obiettivi del progetto, il committente e i vincoli temporali e di pianificazione.
+ 
+Descrizione Generale del Sistema
 Estrarre una panoramica generale del sistema, includendo l'ambito del progetto, gli utenti principali e le interfacce con altri sistemi.
  
-3.	Definizione dei Boundary del Sistema
-Definire i confini del sistema, distinguendo tra ciò che è interno e ciò che è esterno, specificando gli archivi logici interni (ILF) e gli archivi logici esterni (EIF).
-Requisiti Funzionali
+Definizione dei Boundary del Sistema
+Definire i confini del sistema, distinguendo tra ciò che è interno e ciò che è esterno, specificando gli Internal Logical File (ILF) e gli External Interface File (EIF).
  
+Requisiti Funzionali
 Estrarre e organizzare tutti i requisiti funzionali presenti nel documento ARU, includendo per ogni requisito:
 - ID del requisito
 - Titolo del requisito
@@ -137,49 +141,50 @@ Estrarre e organizzare tutti i requisiti funzionali presenti nel documento ARU, 
 - Dipendenze: indicare eventuali dipendenze con altri requisiti o moduli del sistema.
  
 Dettagli sui Dati e le Transazioni:
-• Data Function (Funzioni di Dato): Specificare dettagliatamente gli Archivi Logici Interni (ILF) e gli Archivi Logici Esterni (EIF), descrivendo le entità e gli attributi principali.
-• Transaction Function (Funzioni di Transazione): Definire le Entrate Esterne (EI), Uscite Esterne (EO) e Consultazioni Esterne (EQ), includendo la descrizione dei processi e delle logiche di elaborazione associate.
+- Data Function (Funzioni di tipo dati): Specificare dettagliatamente gli Internal Logical File (ILF) e gli External Interface File (EIF), descrivendo le entità e gli attributi principali.
+- Transaction Function (Funzioni di tipo transazionale): Definire gli External Input (EI), External Output (EO) e External Inquiry (EQ), includendo la descrizione dei processi e delle logiche di elaborazione associate.
  
-4.	Requisiti Non Funzionali
+Requisiti Non Funzionali
 Estrarre e catalogare i requisiti non funzionali, includendo dettagli su:
-• Prestazioni: specifiche richieste di performance.
-• Sicurezza: requisiti relativi alla protezione dei dati e alla sicurezza del sistema.
-• Usabilità: requisiti sull'interfaccia utente e l'esperienza d'uso.
-• Affidabilità: standard di affidabilità e disponibilità richiesti.
-• Manutenibilità: requisiti per la manutenzione e l'aggiornamento del sistema.
-• Portabilità: necessità di operare in diversi ambienti o piattaforme.
+- Prestazioni: specifiche richieste di performance.
+- Sicurezza: requisiti relativi alla protezione dei dati e alla sicurezza del sistema.
+- Usabilità: requisiti sull'interfaccia utente e l'esperienza d'uso.
+- Affidabilità: standard di affidabilità e disponibilità richiesti.
+- Manutenibilità: requisiti per la manutenzione e l'aggiornamento del sistema.
+- Portabilità: necessità di operare in diversi ambienti o piattaforme.
  
-5.	Regole di Business
+Regole di Business
 Documentare tutte le regole di business che influenzano le operazioni e i calcoli effettuati dal sistema.
  
-6.	Eccezioni e Condizioni Speciali
+Eccezioni e Condizioni Speciali
 Descrivere eventuali eccezioni, condizioni speciali o situazioni non standard che il sistema deve gestire.
  
-7.	Report e Output del Sistema
+Report e Output del Sistema
 Documentare tutti i report e gli output generati dal sistema, specificando il contenuto, il formato e la frequenza.
  
-8.	Interfacce Utente
-Dettagliare le interfacce utente, includendo le schermate e le interazioni previste, per identificare correttamente le Entrate Esterne (EI).
+Interfacce Utente
+Dettagliare le interfacce utente, includendo le schermate e le interazioni previste, per identificare correttamente gli External Input (EI).
  
-9.	Processi di Interfacciamento con Altri Sistemi
+Processi di Interfacciamento con Altri Sistemi
 Descrivere come il sistema interagisce con altri sistemi, identificando le interfacce esterne e il flusso di dati tra sistemi.
  
-10.	Casi d'Uso e Scenari Operativi
+Casi d'Uso e Scenari Operativi
 Fornire una descrizione dei casi d'uso principali e degli scenari operativi che il sistema deve supportare.
  
-11.	Dettagli sull'Architettura del Sistema
+Dettagli sull'Architettura del Sistema
 Fornire una panoramica dell'architettura del sistema, descrivendo i componenti principali e le loro interazioni.
  
-12.	Allegati e Appendici
+Allegati e Appendici
 Estrarre eventuali allegati e appendici, includendo:
 - Glossario: definizioni di termini tecnici e acronimi.
 - Diagrammi e Modelli: diagrammi di flusso, modelli di dati e altri diagrammi tecnici.
 - Prototipi e Schermate: bozze o esempi di schermate dell'interfaccia utente.
  
-13.	Note
+Note
 Assicurarsi di mantenere l'ordine e l'organizzazione originale dei contenuti durante l'estrazione.
 Ogni sezione del documento di specifica deve essere chiaramente separata e etichettata, seguendo la struttura delineata sopra.
 """
+
 
 def agent_generate_sf(aru_text: str, summary: str = "", ufp_info: str = "") -> str:
 
@@ -214,42 +219,44 @@ PROMPT_UFP_TEMPLATE = """
 [SPECIFICA FUNZIONALE]
 {sf}
 
-Sei un esperto analista di Function Point certificato IFPUG con esperienza nella stima di progetti di varie dimensioni. Utilizza la specifica funzionale che hai appena creato. Il tuo compito è analizzare questi requisiti e calcolare gli Unadjusted Function Point (UFP) secondo lo standard IFPUG 4.3.1. Segui attentamente questi passaggi:
-  
+Sei un esperto analista di Function Point certificato IFPUG con esperienza nella stima di progetti di varie dimensioni. Utilizza il documento di Specifica Funzionale (SF) che hai appena creato. Il tuo compito è analizzare questi requisiti e calcolare gli Unadjusted Function Point (UFP) secondo standard IFPUG con metodologia "Simple Function Point (SFP)" e specifico riferimento al "Counting Practices Manual (Release 2.2)".
+ 
+Segui attentamente questi passaggi:
+ 
 1. Analisi preliminare:
-  - Leggi attentamente il documento delle spedifica funzionale.
-  - Riassumi in 3-5 frasi la portata e il contesto del progetto, inclusa una stima preliminare delle sue dimensioni (piccolo, medio, grande).
-  - Identifica e elenca tutti i processi elementari e i gruppi di dati logici menzionati esplicitamente.
+ - Leggi attentamente il documento di Specifica Funzionale (SF).
+ - Riassumi in 3-5 frasi la portata e il contesto del progetto, inclusa una stima preliminare delle sue dimensioni (piccolo, medio, grande).
+ - Identifica e elenca tutti i processi elementari e i gruppi di dati logici menzionati esplicitamente.
  
 2. Identificazione e classificazione delle funzioni:
-  - Identifica e classifica le funzioni di tipo dati (ILF e EIF), limitandoti a quelle chiaramente definite nei requisiti.
-  - Identifica e classifica le funzioni di tipo transazionale (EI, EO, EQ), considerando solo i processi elementari distinti.
-  - Per ogni funzione identificata, fornisci una breve giustificazione della classificazione e spiega perché non potrebbe essere classificata diversamente.
+ - Identifica e classifica le funzioni di tipo dati (ILF e EIF), limitandoti a quelle chiaramente definite nella specifica funzionale
+ - Identifica e classifica le funzioni di tipo transazionale (EI, EO, EQ), considerando solo i processi elementari distinti.
+ - Per ogni funzione identificata, fornisci una breve giustificazione della classificazione e spiega perché non potrebbe essere classificata diversamente.
  
-3. Valutazione della complessità:
-  - Per ogni funzione di tipo dati, determina il numero di RET e DET, giustificando chiaramente le tue decisioni.
-  - Per ogni funzione transazionale, determina il numero di FTR e DET, giustificando chiaramente le tue decisioni.
-  - Usa le matrici di complessità fornite nel documento IFPUG per determinare la complessità di ciascuna funzione.
+3. Calcolo EP (Effort Parameter) e LF (Labor Factor):
+Calcola gli EP e gli LF utilizzando le seguenti formule della metodologia "Simple Function Point (SFP)" con specifico riferimento al "Counting Practices Manual (Release 2.2):
+EP = (EO + EI + EQ) × 4.6
+LF = (ILF + EIF) × 7
  
-4. Calcolo degli UFP (Unadjusted Function Points):
-  - Assegna il valore di UFP appropriato a ciascuna funzione in base alla sua complessità.
-  - Somma tutti i valori UFP per ottenere il totale.
-  - Fornisci una breve analisi del totale UFP in relazione alla tua stima preliminare delle dimensioni del progetto.
+4. Calcolo UFP (Unadjusted Function Points):
+- Calcola il numero di UFP utilizzando la seguente formula:
+UFP = EP + LF
+ 
+- Fornisci una breve analisi del totale UFP in relazione alla tua stima preliminare delle dimensioni del progetto.
  
 5. Presentazione dei risultati:
-  - Fornisci una tabella riassuntiva con il conteggio dettagliato per tipo di funzione.
-  - Presenta il calcolo finale dei Function Point, mostrando chiaramente tutti i passaggi.
+ - Fornisci una tabella riassuntiva con il conteggio dettagliato per tipo di funzione.
+ - Presenta il calcolo finale degli Unadjusted Function Points (UFP), mostrando chiaramente tutti i passaggi.
  
 6. Analisi di sensibilità:
-  - Identifica le 3-5 decisioni che hanno avuto il maggior impatto sul conteggio finale.
-  - Spiega come cambierebbe il risultato se queste decisioni fossero state prese diversamente.
+ - Identifica le 3-5 decisioni che hanno avuto il maggior impatto sul conteggio finale.
+ - Spiega come cambierebbe il risultato se queste decisioni fossero state prese diversamente.
  
 7. Verifica finale:
-   - Rivedi il tuo conteggio complessivo e assicurati che sia coerente con la portata e la complessità del progetto come descritto nei requisiti.
-   - Se noti incongruenze, rivedi i passaggi precedenti e giustifica eventuali modifiche.
+  - Rivedi il tuo conteggio complessivo e assicurati che sia coerente con la portata e la complessità del progetto come descritto nei requisiti.
+  - Se noti incongruenze, rivedi i passaggi precedenti e giustifica eventuali modifiche.
  
 Ricorda di essere preciso e coerente in tutte le tue valutazioni. Giustifica chiaramente ogni decisione che ha un impatto significativo sul conteggio finale. Se ci sono ambiguità nei requisiti, esplicita le tue assunzioni e spiega come queste influenzano il conteggio.
-
 """
 
 def agent_calculate_ufp(sf_text: str, requirements_text: str) -> str:
