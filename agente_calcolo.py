@@ -233,7 +233,7 @@ Segui attentamente questi passaggi:
  - Identifica e classifica le funzioni di tipo transazionale (EI, EO, EQ), considerando solo i processi elementari distinti.
  - Per ogni funzione identificata, fornisci una breve giustificazione della classificazione e spiega perché non potrebbe essere classificata diversamente.
  
-3. Calcolo EP (Effort Parameter) e LF (Labor Factor):
+3. Calcolo EP (Effort Parameter) e LF (Logical Files):
 Calcola gli EP e gli LF utilizzando le seguenti formule della metodologia "Simple Function Point (SFP)" con specifico riferimento al "Counting Practices Manual (Release 2.2):
 EP = (EO + EI + EQ) × 4.6
 LF = (ILF + EIF) × 7
